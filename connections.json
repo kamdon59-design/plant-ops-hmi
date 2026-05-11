@@ -1,0 +1,6 @@
+[
+  { "id": 1, "label": "Mixing Room 1",   "type": "vnc",  "target": "192.168.10.11" },
+  { "id": 2, "label": "Bottling Line A", "type": "ftvp", "target": "192.168.10.20" },
+  { "id": 3, "label": "QC Dashboard",    "type": "url",  "target": "https://qc.plant.local" },
+  { "id": 4, "label": "Cold Storage",    "type": "vnc",  "target": "192.168.10.31" }
+]

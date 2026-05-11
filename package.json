@@ -1,0 +1,54 @@
+{
+  "name": "plant-ops-hmi",
+  "version": "1.0.0",
+  "description": "Plant Operations Console - HMI Kiosk Launcher",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64",
+    "build-installer": "electron-builder --win nsis --x64"
+  },
+  "build": {
+    "appId": "com.plantops.hmi",
+    "productName": "Plant Operations Console",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Plant Operations Console"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "connections.json",
+      "config.json"
+    ],
+    "extraResources": [
+      {
+        "from": "connections.json",
+        "to": "connections.json"
+      },
+      {
+        "from": "config.json",
+        "to": "config.json"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "dependencies": {
+    "electron-store": "^8.1.0"
+  }
+}

@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plant Operations Console</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-deep:    #0e1208;
+      --bg-dark:    #131a0d;
+      --bg-panel:   #192210;
+      --bg-card:    #1e2a12;
+      --bg-card-h:  #27381a;
+      --border:     #2e4418;
+      --border-h:   #5a8030;
+      --green-dim:  #5a8c28;
+      --green-mid:  #82d028;
+      --green-hi:   #aaee50;
+      --green-text: #d4f0a0;
+      --green-pale: #eef8cc;
+      --amber:      #f0a830;
+      --amber-bg:   #2e1e06;
+      --amber-bdr:  #704810;
+      --blue:       #70c0ff;
+      --blue-bg:    #0e2240;
+      --blue-bdr:   #2a5a9a;
+      --purple:     #cc88f0;
+      --purple-bg:  #22122e;
+      --purple-bdr: #6a3a9a;
+      --red:        #ff6868;
+      --red-bg:     #2a0808;
+      --red-bdr:    #7a2424;
+      --muted:      #6e9038;
+      --muted2:     #4a6428;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg-deep);
+      color: var(--green-text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ── LAYOUT ── */
+    #app { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ── HEADER ── */
+    #header {
+      background: var(--bg-dark);
+      border-bottom: 1px solid var(--border);
+      padding: 0 32px;
+      height: 72px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .header-left { display: flex; align-items: center; gap: 16px; }
+    .logo {
+      width: 44px; height: 44px; border-radius: 10px;
+      background: var(--green-dim);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px;
+    }
+    .title-block .main-title {
+      font-size: 20px; font-weight: 600;
+      color: var(--green-pale); letter-spacing: 0.03em;
+    }
+    .title-block .sub-title {
+      font-size: 11px; color: var(--muted);
+      letter-spacing: 0.1em; text-transform: uppercase; margin-top: 2px;
+    }
+    .header-right { display: flex; align-items: center; gap: 24px; }
+    #clock {
+      font-size: 28px; font-weight: 600;
+      color: var(--green-mid);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.04em;
+    }
+    #date-display {
+      font-size: 12px; color: var(--muted);
+      text-align: right; line-height: 1.6;
+    }
+
+    /* ── BODY ── */
+    #body {
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: 28px 32px;
+    }
+    #body::-webkit-scrollbar { width: 6px; }
+    #body::-webkit-scrollbar-track { background: var(--bg-dark); }
+    #body::-webkit-scrollbar-thumb { background: var(--green-dim); border-radius: 3px; }
+
+    .section-label {
+      font-size: 10px; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--muted);
+      margin-bottom: 16px; padding-left: 2px;
+    }
+
+    /* ── BUTTON GRID ── */
+    #btn-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 14px;
+    }
+
+    .hmi-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 18px 18px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, transform 0.1s;
+      text-align: left;
+      position: relative;
+      min-height: 130px;
+      display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .hmi-btn:hover { background: var(--bg-card-h); border-color: var(--border-h); transform: translateY(-2px); }
+    .hmi-btn:active { transform: scale(0.97); }
+    .hmi-btn.launching { background: #1e3a10; border-color: var(--green-mid); }
+
+    .btn-badge {
+      position: absolute; top: 10px; right: 10px;
+      font-size: 9px; font-weight: 600; letter-spacing: 0.08em;
+      padding: 3px 7px; border-radius: 5px; text-transform: uppercase;
+    }
+    .badge-vnc  { background: var(--blue-bg);   color: var(--blue);   border: 0.5px solid var(--blue-bdr); }
+    .badge-ftvp { background: var(--amber-bg);  color: var(--amber);  border: 0.5px solid var(--amber-bdr); }
+    .badge-url  { background: #0d2818;          color: #4caf72;       border: 0.5px solid #1a5030; }
+    .badge-app  { background: var(--purple-bg); color: var(--purple); border: 0.5px solid var(--purple-bdr); }
+
+    .btn-icon { font-size: 28px; margin-bottom: 10px; display: block; }
+    .btn-label { font-size: 15px; font-weight: 600; color: var(--green-pale); line-height: 1.3; }
+    .btn-target {
+      font-size: 11px; color: var(--muted);
+      margin-top: 5px; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+    }
+    .btn-launch-hint {
+      font-size: 10px; color: var(--green-dim);
+      margin-top: 8px; letter-spacing: 0.06em;
+    }
+
+    /* ── ADD BUTTON ── */
+    .add-btn {
+      background: var(--bg-dark);
+      border: 1.5px dashed var(--green-dim);
+      border-radius: 12px; padding: 20px 18px;
+      cursor: pointer; min-height: 130px;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 8px;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .add-btn:hover { background: var(--bg-panel); border-color: var(--green-mid); }
+    .add-btn-icon { font-size: 32px; color: var(--green-dim); }
+    .add-btn-label { font-size: 12px; color: var(--green-dim); letter-spacing: 0.08em; text-transform: uppercase; }
+
+    /* ── FOOTER ── */
+    #footer {
+      background: var(--bg-dark);
+      border-top: 1px solid var(--border);
+      padding: 0 32px;
+      height: 44px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .footer-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green-mid); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .footer-ver { font-size: 10px; color: var(--muted2); }
+    .admin-btn {
+      font-size: 11px; color: var(--muted2);
+      background: none; border: 1px solid var(--muted2);
+      border-radius: 5px; padding: 4px 10px; cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .admin-btn:hover { border-color: var(--muted); color: var(--muted); }
+
+    /* ── OVERLAYS ── */
+    .overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.82);
+      z-index: 200;
+      align-items: center; justify-content: center;
+    }
+    .overlay.open { display: flex; }
+
+    /* ── MODAL BASE ── */
+    .modal {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-h);
+      border-radius: 14px; padding: 28px;
+      width: 400px; max-width: 92vw;
+      max-height: 88vh; overflow-y: auto;
+    }
+    .modal h2 { font-size: 16px; font-weight: 600; color: var(--green-pale); margin-bottom: 22px; }
+    .form-row { margin-bottom: 16px; }
+    .form-row label {
+      display: block; font-size: 10px; color: var(--muted);
+      letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 6px;
+    }
+    .form-row input, .form-row select {
+      width: 100%; padding: 9px 12px;
+      background: var(--bg-dark); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--green-text);
+      font-size: 14px; outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-row input:focus, .form-row select:focus { border-color: var(--green-mid); }
+    .form-row input::placeholder { color: var(--muted2); }
+    .form-row select option { background: var(--bg-panel); }
+    .form-row .hint { font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
+    .form-row input.error { border-color: var(--red); }
+
+    .modal-actions { display: flex; gap: 10px; margin-top: 24px; align-items: center; }
+    .btn-save {
+      flex: 1; padding: 10px; border-radius: 8px; border: none; cursor: pointer;
+      background: var(--green-dim); color: var(--green-pale);
+      font-size: 14px; font-weight: 600;
+      transition: background 0.15s;
+    }
+    .btn-save:hover { background: #5a9428; }
+    .btn-cancel-m {
+      padding: 10px 18px; border-radius: 8px; cursor: pointer;
+      background: transparent; border: 1px solid var(--border);
+      color: var(--muted); font-size: 14px;
+      transition: border-color 0.15s;
+    }
+    .btn-cancel-m:hover { border-color: var(--border-h); color: var(--green-text); }
+    .btn-del {
+      padding: 10px 12px; border-radius: 8px; cursor: pointer;
+      background: transparent; border: 1px solid var(--red-bdr);
+      color: var(--red); font-size: 14px;
+      transition: border-color 0.15s;
+    }
+    .btn-del:hover { border-color: var(--red); }
+
+    /* ── PASSWORD MODAL ── */
+    #pwd-modal { width: 340px; }
+    #pwd-modal .pwd-icon { font-size: 40px; text-align: center; margin-bottom: 12px; }
+    #pwd-modal h2 { text-align: center; }
+    #pwd-error { font-size: 12px; color: var(--red); margin-top: 6px; display: none; }
+
+    /* ── ADMIN PANEL ── */
+    #admin-modal { width: 480px; }
+    .admin-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+    .tab-btn {
+      padding: 7px 16px; border-radius: 7px; cursor: pointer;
+      background: none; border: 1px solid transparent;
+      color: var(--muted); font-size: 13px;
+      transition: all 0.15s;
+    }
+    .tab-btn.active { background: var(--bg-card); border-color: var(--border-h); color: var(--green-text); }
+    .tab-btn:hover:not(.active) { color: var(--green-text); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .conn-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    .conn-item {
+      background: var(--bg-dark); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 14px;
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; transition: border-color 0.15s;
+    }
+    .conn-item:hover { border-color: var(--border-h); }
+    .conn-item-left { display: flex; align-items: center; gap: 10px; }
+    .conn-item-icon { font-size: 18px; }
+    .conn-item-name { font-size: 13px; color: var(--green-text); font-weight: 500; }
+    .conn-item-sub { font-size: 11px; color: var(--muted); }
+    .conn-item-badge { font-size: 9px; padding: 2px 6px; border-radius: 4px; }
+    .add-conn-btn {
+      width: 100%; padding: 10px; border-radius: 8px; cursor: pointer;
+      background: transparent; border: 1.5px dashed var(--green-dim);
+      color: var(--muted); font-size: 13px;
+      transition: all 0.15s;
+    }
+    .add-conn-btn:hover { border-color: var(--green-mid); color: var(--green-text); }
+
+    /* confirm */
+    .confirm-box {
+      background: var(--bg-panel); border: 1px solid var(--border-h);
+      border-radius: 14px; padding: 28px; width: 300px; text-align: center;
+    }
+    .confirm-box p { color: var(--green-text); font-size: 14px; margin-bottom: 20px; line-height: 1.6; }
+    .confirm-box strong { color: var(--green-hi); }
+    .confirm-actions { display: flex; gap: 10px; justify-content: center; }
+
+    .btn-signout {
+      font-size: 11px; color: var(--muted);
+      background: none; border: 1px solid var(--border);
+      border-radius: 6px; padding: 5px 11px; cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .btn-signout:hover { border-color: var(--red-bdr); color: var(--red); }
+
+    /* toast */
+    #toast {
+      position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+      background: var(--bg-card); border: 1px solid var(--green-dim);
+      color: var(--green-text); padding: 10px 22px;
+      border-radius: 8px; font-size: 13px;
+      opacity: 0; transition: opacity 0.3s;
+      z-index: 500; pointer-events: none;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- HEADER -->
+  <div id="header">
+    <div class="header-left">
+      <div class="logo">🌿</div>
+      <div class="title-block">
+        <div class="main-title" id="main-title">Plant Operations Console</div>
+        <div class="sub-title" id="sub-title">Food &amp; Beverage — Kiosk Mode</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div>
+        <div id="clock">--:--:--</div>
+        <div id="date-display">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BODY -->
+  <div id="body">
+    <div class="section-label">Workstation Connections</div>
+    <div id="btn-grid"></div>
+  </div>
+
+  <!-- FOOTER -->
+  <div id="footer">
+    <div class="footer-status">
+      <div class="status-dot"></div>
+      <span>Kiosk Active</span>
+    </div>
+    <button class="admin-btn" id="admin-footer-btn" onclick="openPwdModal()">⚙ Admin</button>
+    <div class="footer-ver">Plant Operations Console v1.0</div>
+  </div>
+
+</div>
+
+<!-- ── PASSWORD MODAL ── -->
+<div class="overlay" id="pwd-overlay">
+  <div class="modal" id="pwd-modal">
+    <div class="pwd-icon">🔒</div>
+    <h2>Admin Access</h2>
+    <div class="form-row" style="margin-top:16px">
+      <label>Password</label>
+      <input type="password" id="pwd-input" placeholder="Enter admin password"
+             onkeydown="if(event.key==='Enter')submitPwd()" />
+      <div id="pwd-error">Incorrect password. Please try again.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel-m" onclick="closePwdModal()">Cancel</button>
+      <button class="btn-save" onclick="submitPwd()">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADMIN PANEL ── -->
+<div class="overlay" id="admin-overlay">
+  <div class="modal" id="admin-modal">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:22px">
+      <h2 style="margin-bottom:0">⚙ Admin Panel</h2>
+      <button class="btn-signout" onclick="signOut()" title="Sign out of admin">🔓 Sign Out</button>
+    </div>
+    <div class="admin-tabs">
+      <button class="tab-btn active" onclick="showTab('tab-connections')">Connections</button>
+      <button class="tab-btn" onclick="showTab('tab-settings')">Settings</button>
+    </div>
+
+    <!-- Connections Tab -->
+    <div class="tab-panel active" id="tab-connections">
+      <div class="conn-list" id="conn-list"></div>
+      <button class="add-conn-btn" onclick="openAddConn()">+ Add New Connection</button>
+      <div class="modal-actions" style="margin-top:16px">
+        <button class="btn-cancel-m" onclick="closeAdmin()">Close</button>
+        <button class="btn-save" onclick="saveAndClose()">Save &amp; Close</button>
+      </div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div class="tab-panel" id="tab-settings">
+      <div class="form-row">
+        <label>App Title</label>
+        <input type="text" id="cfg-title" placeholder="Plant Operations Console" />
+      </div>
+      <div class="form-row">
+        <label>Subtitle</label>
+        <input type="text" id="cfg-subtitle" placeholder="Food & Beverage — Kiosk Mode" />
+      </div>
+      <div class="form-row">
+        <label>Change Admin Password</label>
+        <input type="password" id="cfg-pwd" placeholder="Leave blank to keep current" oninput="checkPwdMatch()" />
+      </div>
+      <div class="form-row">
+        <label>Confirm New Password</label>
+        <input type="password" id="cfg-pwd2" placeholder="Confirm new password" oninput="checkPwdMatch()" />
+        <div class="hint" id="pwd-match-hint"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel-m" onclick="closeAdmin()">Cancel</button>
+        <button class="btn-save" onclick="saveSettings()">Save Settings</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD/EDIT CONNECTION MODAL ── -->
+<div class="overlay" id="conn-overlay">
+  <div class="modal">
+    <h2 id="conn-modal-title">Add Connection</h2>
+    <div class="form-row">
+      <label>Button Label</label>
+      <input type="text" id="f-label" placeholder="e.g. Filling Line 3" />
+    </div>
+    <div class="form-row">
+      <label>Connection Type</label>
+      <select id="f-type" onchange="updateConnHint()">
+        <option value="vnc">RealVNC Viewer (vnc://)</option>
+        <option value="ftvp">FactoryTalk ViewPoint (FTVP)</option>
+        <option value="url">Direct URL</option>
+        <option value="app">Local App / Executable</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label id="f-target-label">Host / IP Address</label>
+      <input type="text" id="f-target" placeholder="192.168.1.10" />
+      <div class="hint" id="f-hint">Opens RealVNC Viewer — enter the host IP or hostname.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel-m" onclick="closeConnModal()">Cancel</button>
+      <button class="btn-del" id="btn-del-conn" style="display:none" onclick="promptDeleteConn()">🗑 Delete</button>
+      <button class="btn-save" onclick="saveConn()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── CONFIRM DELETE ── -->
+<div class="overlay" id="confirm-overlay">
+  <div class="confirm-box">
+    <p>Remove <strong id="confirm-name"></strong>?</p>
+    <div class="confirm-actions">
+      <button class="btn-cancel-m" onclick="document.getElementById('confirm-overlay').classList.remove('open')">Keep it</button>
+      <button class="btn-save" style="background:#7a2020;color:#f0a0a0" onclick="confirmDeleteConn()">Remove</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script>
+  // ── State ──
+  let connections = [];
+  let adminUnlocked = false;
+  let config = {};
+  let editingConnId = null;
+  let pendingDeleteId = null;
+
+  const TYPE_META = {
+    vnc:  { badge:'VNC',  badgeClass:'badge-vnc',  icon:'🖥️',
+            label:'Host / IP Address', placeholder:'192.168.1.10',
+            hint:'Opens RealVNC Viewer — enter the host IP only. Port 5900 is added automatically.',
+            buildUrl: null },
+    ftvp: { badge:'FTVP', badgeClass:'badge-ftvp', icon:'⚙️',
+            label:'Server IP / Hostname', placeholder:'192.168.1.20',
+            hint:'Opens FactoryTalk ViewPoint — enter the IP only. /ftvp is added automatically.',
+            buildUrl: t => {
+              // Strip any accidental http:// or https:// prefix, then build plain path
+              const clean = t.replace(/^https?:\/\//i, '').replace(/\/ftvp\/?$/i, '');
+              return clean + '/ftvp';
+            }},
+    url:  { badge:'URL',  badgeClass:'badge-url',  icon:'🌐',
+            label:'Full URL', placeholder:'https://dashboard.plant.local',
+            hint:'Opens the URL directly in the default browser.',
+            buildUrl: t => t },
+    app:  { badge:'APP',  badgeClass:'badge-app',  icon:'💻',
+            label:'Executable Path', placeholder:'C:\\Tools\\viewer.exe',
+            hint:'Launches a local executable or application path.',
+            buildUrl: null },
+  };
+
+  // ── Init ──
+  async function init() {
+    connections = await window.hmiAPI.getConnections();
+    config = await window.hmiAPI.getConfig();
+    applyConfig();
+    renderGrid();
+    updateClock();
+    setInterval(updateClock, 1000);
+    window.hmiAPI.onShowAdmin(() => openPwdModal());
+  }
+
+  function applyConfig() {
+    if (config.title) document.getElementById('main-title').textContent = config.title;
+    if (config.subtitle) document.getElementById('sub-title').textContent = config.subtitle;
+  }
+
+  // ── Clock ──
+  function updateClock() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      now.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12: false });
+    document.getElementById('date-display').textContent =
+      now.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+  }
+
+  // ── Grid ──
+  function renderGrid() {
+    const grid = document.getElementById('btn-grid');
+    grid.innerHTML = '';
+    connections.forEach(conn => {
+      const m = TYPE_META[conn.type] || TYPE_META.url;
+      const el = document.createElement('div');
+      el.className = 'hmi-btn';
+      el.id = 'btn_' + conn.id;
+      el.innerHTML = `
+        <span class="btn-badge ${m.badgeClass}">${m.badge}</span>
+        <span class="btn-icon">${m.icon}</span>
+        <div>
+          <div class="btn-label">${escHtml(conn.label)}</div>
+          <div class="btn-target">${escHtml(conn.target)}</div>
+          <div class="btn-launch-hint">Click to launch</div>
+        </div>`;
+      el.addEventListener('click', () => launchConn(conn, el));
+      grid.appendChild(el);
+    });
+
+    // Add button — only visible when admin is unlocked
+    if (adminUnlocked) {
+      const addEl = document.createElement('div');
+      addEl.className = 'add-btn';
+      addEl.innerHTML = `<span class="add-btn-icon">＋</span><span class="add-btn-label">Add Connection</span>`;
+      addEl.addEventListener('click', openAddConn);
+      grid.appendChild(addEl);
+    }
+  }
+
+  // ── Launch ──
+  async function launchConn(conn, el) {
+    el.classList.add('launching');
+    setTimeout(() => el.classList.remove('launching'), 700);
+
+    const m = TYPE_META[conn.type];
+    if (conn.type === 'vnc') {
+      // Launch RealVNC Viewer directly as an executable with IP:port as argument
+      const target = conn.target.includes(':') ? conn.target : conn.target + ':5900';
+      await window.hmiAPI.launchVnc(target);
+    } else if (conn.type === 'app') {
+      await window.hmiAPI.launchApp(conn.target);
+    } else {
+      const url = m.buildUrl(conn.target);
+      await window.hmiAPI.launchUrl(url);
+    }
+    showToast('Launching: ' + conn.label);
+  }
+
+  // ── Password Modal ──
+  function openPwdModal() {
+    document.getElementById('pwd-input').value = '';
+    document.getElementById('pwd-error').style.display = 'none';
+    document.getElementById('pwd-input').classList.remove('error');
+    document.getElementById('pwd-overlay').classList.add('open');
+    setTimeout(() => document.getElementById('pwd-input').focus(), 80);
+  }
+  function closePwdModal() {
+    document.getElementById('pwd-overlay').classList.remove('open');
+  }
+  async function submitPwd() {
+    const pwd = document.getElementById('pwd-input').value;
+    const ok = await window.hmiAPI.verifyPassword(pwd);
+    if (ok) {
+      adminUnlocked = true;
+      renderGrid();
+      closePwdModal();
+      openAdmin();
+    } else {
+      document.getElementById('pwd-error').style.display = 'block';
+      document.getElementById('pwd-input').classList.add('error');
+      document.getElementById('pwd-input').value = '';
+      document.getElementById('pwd-input').focus();
+    }
+  }
+
+  // ── Admin Panel ──
+  function openAdmin() {
+    renderConnList();
+    document.getElementById('cfg-title').value = config.title || '';
+    document.getElementById('cfg-subtitle').value = config.subtitle || '';
+    document.getElementById('cfg-pwd').value = '';
+    document.getElementById('cfg-pwd2').value = '';
+    document.getElementById('pwd-match-hint').textContent = '';
+    showTab('tab-connections');
+    document.getElementById('admin-overlay').classList.add('open');
+    document.getElementById('admin-footer-btn').textContent = '🔓 Admin';
+  }
+  function closeAdmin() {
+    adminUnlocked = false;
+    renderGrid();
+    document.getElementById('admin-overlay').classList.remove('open');
+    document.getElementById('admin-footer-btn').textContent = '⚙ Admin';
+  }
+  async function saveAndClose() {
+    await window.hmiAPI.saveConnections(connections);
+    closeAdmin();
+    showToast('Connections saved.');
+  }
+  function showTab(id) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    event.target.classList.add('active');
+  }
+
+  // ── Connection List in Admin ──
+  function renderConnList() {
+    const list = document.getElementById('conn-list');
+    list.innerHTML = '';
+    connections.forEach(conn => {
+      const m = TYPE_META[conn.type] || TYPE_META.url;
+      const item = document.createElement('div');
+      item.className = 'conn-item';
+      item.innerHTML = `
+        <div class="conn-item-left">
+          <span class="conn-item-icon">${m.icon}</span>
+          <div>
+            <div class="conn-item-name">${escHtml(conn.label)}</div>
+            <div class="conn-item-sub">${escHtml(conn.target)}</div>
+          </div>
+        </div>
+        <span class="conn-item-badge btn-badge ${m.badgeClass}">${m.badge}</span>`;
+      item.addEventListener('click', () => openEditConn(conn.id));
+      list.appendChild(item);
+    });
+  }
+
+  // ── Add/Edit Connection ──
+  function openAddConn() {
+    editingConnId = null;
+    document.getElementById('conn-modal-title').textContent = 'Add Connection';
+    document.getElementById('f-label').value = '';
+    document.getElementById('f-type').value = 'vnc';
+    document.getElementById('f-target').value = '';
+    document.getElementById('btn-del-conn').style.display = 'none';
+    document.getElementById('f-label').classList.remove('error');
+    document.getElementById('f-target').classList.remove('error');
+    updateConnHint();
+    document.getElementById('conn-overlay').classList.add('open');
+    setTimeout(() => document.getElementById('f-label').focus(), 80);
+  }
+  function openEditConn(id) {
+    const conn = connections.find(c => c.id === id);
+    if (!conn) return;
+    editingConnId = id;
+    document.getElementById('conn-modal-title').textContent = 'Edit Connection';
+    document.getElementById('f-label').value = conn.label;
+    document.getElementById('f-type').value = conn.type;
+    document.getElementById('f-target').value = conn.target;
+    document.getElementById('btn-del-conn').style.display = '';
+    document.getElementById('f-label').classList.remove('error');
+    document.getElementById('f-target').classList.remove('error');
+    updateConnHint();
+    document.getElementById('conn-overlay').classList.add('open');
+  }
+  function closeConnModal() {
+    document.getElementById('conn-overlay').classList.remove('open');
+    editingConnId = null;
+  }
+  function updateConnHint() {
+    const type = document.getElementById('f-type').value;
+    const m = TYPE_META[type];
+    document.getElementById('f-hint').textContent = m.hint;
+    document.getElementById('f-target-label').textContent = m.label;
+    document.getElementById('f-target').placeholder = m.placeholder;
+  }
+  function saveConn() {
+    const label  = document.getElementById('f-label').value.trim();
+    const type   = document.getElementById('f-type').value;
+    const target = document.getElementById('f-target').value.trim();
+    let valid = true;
+    if (!label)  { document.getElementById('f-label').classList.add('error');  valid = false; }
+    else           document.getElementById('f-label').classList.remove('error');
+    if (!target) { document.getElementById('f-target').classList.add('error'); valid = false; }
+    else           document.getElementById('f-target').classList.remove('error');
+    if (!valid) return;
+
+    if (editingConnId !== null) {
+      const idx = connections.findIndex(c => c.id === editingConnId);
+      if (idx >= 0) connections[idx] = { id: editingConnId, label, type, target };
+    } else {
+      connections.push({ id: Date.now(), label, type, target });
+    }
+    closeConnModal();
+    renderConnList();
+    renderGrid();
+    window.hmiAPI.saveConnections(connections);
+  }
+  function promptDeleteConn() {
+    const conn = connections.find(c => c.id === editingConnId);
+    if (!conn) return;
+    pendingDeleteId = editingConnId;
+    document.getElementById('confirm-name').textContent = conn.label;
+    closeConnModal();
+    document.getElementById('confirm-overlay').classList.add('open');
+  }
+  function confirmDeleteConn() {
+    connections = connections.filter(c => c.id !== pendingDeleteId);
+    pendingDeleteId = null;
+    document.getElementById('confirm-overlay').classList.remove('open');
+    renderConnList();
+    renderGrid();
+    window.hmiAPI.saveConnections(connections);
+  }
+
+  function signOut() {
+    adminUnlocked = false;
+    renderGrid();
+    document.getElementById('admin-overlay').classList.remove('open');
+    document.getElementById('admin-footer-btn').textContent = '⚙ Admin';
+    showToast('Signed out of admin.');
+  }
+
+  // ── Password match feedback ──
+  function checkPwdMatch() {
+    const pwd  = document.getElementById('cfg-pwd').value;
+    const pwd2 = document.getElementById('cfg-pwd2').value;
+    const hint = document.getElementById('pwd-match-hint');
+    if (!pwd && !pwd2) { hint.textContent = ''; return; }
+    if (!pwd2) { hint.textContent = ''; return; }
+    if (pwd === pwd2) {
+      hint.textContent = '✓ Passwords match.';
+      hint.style.color = 'var(--green-mid)';
+    } else {
+      hint.textContent = '⚠ Passwords do not match.';
+      hint.style.color = 'var(--red)';
+    }
+  }
+
+  // ── Settings ──
+  async function saveSettings() {
+    const title    = document.getElementById('cfg-title').value.trim();
+    const subtitle = document.getElementById('cfg-subtitle').value.trim();
+    const pwd      = document.getElementById('cfg-pwd').value;
+    const pwd2     = document.getElementById('cfg-pwd2').value;
+
+    if (pwd && pwd !== pwd2) {
+      document.getElementById('pwd-match-hint').textContent = '⚠ Passwords do not match.';
+      document.getElementById('pwd-match-hint').style.color = 'var(--red)';
+      return;
+    }
+
+    if (title)    config.title    = title;
+    if (subtitle) config.subtitle = subtitle;
+    if (pwd)      config.adminPassword = pwd;
+
+    await window.hmiAPI.saveConfig(config);
+    await window.hmiAPI.saveConnections(connections);
+    applyConfig();
+    closeAdmin();
+    showToast(pwd ? 'Settings & password saved.' : 'Settings saved.');
+  }
+
+  // ── Toast ──
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2500);
+  }
+
+  // ── Util ──
+  function escHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Start ──
+  init();
+</script>
+</body>
+</html>
