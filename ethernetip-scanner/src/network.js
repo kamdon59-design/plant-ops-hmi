@@ -1,0 +1,268 @@
+// Network adapter detection, ARP-table lookup, and the scan orchestrator.
+
+const os = require('os');
+const { execFile } = require('child_process');
+const EventEmitter = require('events');
+const enip = require('./enip');
+
+const VIRTUAL_ADAPTER = /(vmware|virtualbox|vbox|hyper-v|vethernet|loopback|docker|wsl|tailscale|zerotier|vpn|tap|tun|utun|bridge|br-|veth|npcap)/i;
+const WIRELESS_ADAPTER = /(wi-?fi|wlan|wireless|airport)/i;
+
+/** Physical-looking IPv4 adapters that are up and have an address. */
+function listAdapters() {
+  const out = [];
+  const ifaces = os.networkInterfaces();
+  for (const [name, addrs] of Object.entries(ifaces)) {
+    for (const a of addrs || []) {
+      if (a.family !== 'IPv4' && a.family !== 4) continue;
+      if (a.internal) continue;
+      out.push({
+        name,
+        address: a.address,
+        netmask: a.netmask,
+        mac: (a.mac || '').toUpperCase(),
+        broadcast: enip.broadcastAddress(a.address, a.netmask),
+        linkLocal: a.address.startsWith('169.254.'),
+        virtual: VIRTUAL_ADAPTER.test(name),
+        wireless: WIRELESS_ADAPTER.test(name)
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Polls the OS adapters and emits:
+ *   'change'  (adapters)          — on any change
+ *   'connected' (adapter)         — a new adapter/IP appeared (cable plugged in)
+ *   'disconnected' (adapter)      — an adapter/IP disappeared
+ */
+class AdapterWatcher extends EventEmitter {
+  constructor(intervalMs = 2000) {
+    super();
+    this.intervalMs = intervalMs;
+    this.known = new Map();
+    this.timer = null;
+  }
+  key(a) { return `${a.name}|${a.address}`; }
+  start() {
+    for (const a of listAdapters()) this.known.set(this.key(a), a);
+    this.timer = setInterval(() => this.poll(), this.intervalMs);
+    return [...this.known.values()];
+  }
+  poll() {
+    const now = new Map(listAdapters().map((a) => [this.key(a), a]));
+    let changed = false;
+    for (const [k, a] of now) if (!this.known.has(k)) { changed = true; this.emit('connected', a); }
+    for (const [k, a] of this.known) if (!now.has(k)) { changed = true; this.emit('disconnected', a); }
+    this.known = now;
+    if (changed) this.emit('change', [...now.values()]);
+  }
+  stop() { clearInterval(this.timer); }
+}
+
+// ── ARP table (fallback for MAC addresses) ───────────────────────────────
+
+function run(cmd, args) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout: 4000, windowsHide: true }, (err, stdout) => resolve(err ? '' : String(stdout)));
+  });
+}
+
+/** Returns Map<ip, "AA:BB:CC:DD:EE:FF"> parsed from the OS neighbour table. */
+async function readArpTable() {
+  const map = new Map();
+  const add = (ip, mac) => {
+    const norm = mac.replace(/-/g, ':').split(':').map((p) => p.padStart(2, '0')).join(':').toUpperCase();
+    if (/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(norm) && norm !== 'FF:FF:FF:FF:FF:FF' && norm !== '00:00:00:00:00:00') {
+      map.set(ip, norm);
+    }
+  };
+
+  let text = '';
+  if (process.platform === 'linux') text = await run('ip', ['neigh']);
+  if (!text) text = await run('arp', process.platform === 'win32' ? ['-a'] : ['-an']);
+
+  const re = /(\d{1,3}(?:\.\d{1,3}){3})\D+?(([0-9a-f]{1,2}[:-]){5}[0-9a-f]{1,2})/gi;
+  for (const line of text.split(/\r?\n/)) {
+    re.lastIndex = 0;
+    const m = re.exec(line);
+    if (m) add(m[1], m[2]);
+  }
+  return map;
+}
+
+// ── Scan orchestrator ────────────────────────────────────────────────────
+
+const PRIVATE_RANGES = ['192.168.0.0/16', '172.16.0.0/12'];
+
+// MAC prefixes registered to Rockwell Automation / Allen-Bradley.
+const ROCKWELL_OUIS = ['00:00:BC', '00:1D:9C', '5C:88:16', 'E4:90:69'];
+function macVendor(mac) {
+  return ROCKWELL_OUIS.includes(String(mac).slice(0, 8).toUpperCase())
+    ? 'Rockwell Automation / Allen-Bradley (by MAC address)'
+    : '';
+}
+const TEN_RANGE = ['10.0.0.0/8'];
+
+function sameSubnet(ip, ad) {
+  const m = enip.ipToInt(ad.netmask);
+  return ((enip.ipToInt(ip) & m) >>> 0) === ((enip.ipToInt(ad.address) & m) >>> 0);
+}
+
+async function mapLimit(items, limit, fn) {
+  const queue = [...items];
+  await Promise.all(Array.from({ length: Math.min(limit, queue.length) }, async () => {
+    while (queue.length) await fn(queue.shift());
+  }));
+}
+
+/**
+ * Scan one or more adapters for EtherNet/IP devices.
+ * @param {object} opts
+ * @param {object[]} opts.adapters      from listAdapters()
+ * @param {boolean} [opts.sweep]        also unicast every host in the adapter's subnet
+ * @param {string[]} [opts.extraTargets] additional IPs to probe directly
+ * @param {object} [opts.l2]            L2Manager — enables finding devices on any subnet
+ * @param {boolean} [opts.anySubnet]    use layer-2 discovery (needs Npcap)
+ * @param {boolean} [opts.include10]    also probe every /24 in 10.0.0.0/8 (slower)
+ * @param {string[]} [opts.extraRanges] extra CIDR ranges to probe at layer 2
+ * @param {(evt)=>void} [opts.onEvent]  progress callback
+ */
+async function scan({
+  adapters, sweep = true, extraTargets = [], l2 = null, anySubnet = true,
+  include10 = false, extraRanges = [], retryDelayMs = 4000, onEvent = () => {}
+}) {
+  const devices = new Map();
+  const log = (message) => onEvent({ type: 'log', message });
+  log(`scan start: adapters ${adapters.map((a) => `${a.name}=${a.address}/${a.netmask}`).join(' ')}; any-subnet=${!!(anySubnet && l2 && l2.ok)} include10=${include10}`);
+  const add = (dev, ad) => {
+    const prev = devices.get(dev.ip);
+    if (prev && prev.unidentified && !dev.unidentified) devices.delete(dev.ip);
+    else if (prev) {
+      if (!prev.mac && dev.mac) { prev.mac = dev.mac; prev.macSource = dev.macSource; onEvent({ type: 'device', device: prev }); }
+      return;
+    }
+    dev.adapter = ad.name;
+    dev.otherSubnet = !sameSubnet(dev.ip, ad);
+    dev.mac = dev.mac || '';
+    dev.macSource = dev.macSource || '';
+    devices.set(dev.ip, dev);
+    onEvent({ type: 'device', device: dev });
+  };
+
+  await Promise.all(adapters.map(async (ad) => {
+    // 1. Normal UDP discovery through the OS (same subnet).
+    const ipPath = (async () => {
+      const targets = new Set([ad.broadcast, '255.255.255.255', ...extraTargets]);
+      if (sweep && !ad.linkLocal) for (const h of enip.hostsInSubnet(ad.address, ad.netmask, 1024)) targets.add(h);
+      onEvent({ type: 'status', message: `Probing ${targets.size} address(es) on ${ad.name} (${ad.address})…` });
+      try {
+        await enip.discover({ localAddress: ad.address, targets: [...targets], timeout: 3000, onDevice: (d) => add(d, ad) });
+      } catch (e) {
+        onEvent({ type: 'error', message: `${ad.name}: ${e.message}` });
+      }
+    })();
+
+    // 2. Layer-2 discovery — finds devices whatever subnet they are on.
+    const l2Path = (async () => {
+      if (!anySubnet || !l2 || !l2.ok) return;
+      const listener = l2.forAdapter(ad);
+      if (!listener) { onEvent({ type: 'status', message: `${ad.name}: packet capture not available on this adapter` }); return; }
+      const disc = listener.disc;
+      const onId = (id) => add(id, ad);
+      const onLog = (m) => log(m);
+      disc.on('identity', onId);
+      disc.on('log', onLog);
+      try {
+        const ranges = [...PRIVATE_RANGES, ...(include10 ? TEN_RANGE : []), ...extraRanges];
+        const recent = Date.now() - 15 * 60 * 1000;
+        const failed = new Map(); // ip -> host that didn't answer yet
+        const pending = () => [...disc.hosts.values()].filter((h) =>
+          h.lastSeen > recent && !devices.has(h.ip) && !sameSubnet(h.ip, ad));
+
+        // Ask each host that revealed itself for its identity.
+        // Hosts in our own subnet were already asked through the normal path.
+        const identify = async (hosts, opts) => {
+          if (hosts.length) onEvent({ type: 'status', message: `Found ${hosts.length} address(es) on other subnets — asking for identity…` });
+          await mapLimit(hosts, 6, async (h) => {
+            const id = await disc.queryIdentity(h, opts);
+            if (id) {
+              failed.delete(h.ip);
+              log(`${h.ip}: identity "${id.productName}" fw ${id.firmware} (asked from ${id.suggestedLaptopIp})`);
+              add(id, ad);
+            } else {
+              failed.set(h.ip, h);
+            }
+          });
+        };
+
+        await disc.sweep({
+          ranges,
+          pps: include10 ? 4000 : 2000,
+          widePps: include10 ? 3000 : 1000,
+          onProgress: (done, total, label) => onEvent({
+            type: 'status',
+            message: `Searching all subnets on ${ad.name} (${label})… ${Math.round((done / total) * 100)}%`
+          }),
+          afterQuietPasses: () => identify(pending())
+        });
+        await new Promise((r) => setTimeout(r, 800)); // late ARPs
+        for (const h of disc.hosts.values()) {
+          if (h.lastSeen > recent) log(`${ad.name}: seen ${h.ip} ${h.mac} via ${[...h.via].join(',')}`);
+        }
+        await identify(pending().filter((h) => !failed.has(h.ip)));
+
+        // Slow devices (e.g. still busy replying to an unreachable gateway after
+        // the wide pass) get two more chances after a pause.
+        for (let round = 1; round <= 2 && failed.size; round++) {
+          onEvent({ type: 'status', message: `Waiting for ${failed.size} slow device(s) to answer… (retry ${round} of 2)` });
+          log(`retry ${round}: ${[...failed.keys()].join(', ')}`);
+          await new Promise((r) => setTimeout(r, retryDelayMs));
+          await identify([...failed.values()], { timeout: 2500, maxSources: 2 });
+        }
+
+        for (const h of failed.values()) {
+          // Still report it: the IP and MAC are known even without an identity reply.
+          log(`${h.ip}: no EtherNet/IP identity reply`);
+          add({
+            ip: h.ip, mac: h.mac, macSource: 'Ethernet', unidentified: true,
+            productName: '', catalog: '', firmware: '', serial: '',
+            vendor: macVendor(h.mac), deviceTypeName: `Seen via ${[...h.via].join(', ')}`,
+            suggestedLaptopIp: disc.sourceCandidates(h.ip)[0] || ''
+          }, ad);
+        }
+      } catch (e) {
+        onEvent({ type: 'error', message: `${ad.name}: ${e.message}` });
+      } finally {
+        disc.removeListener('identity', onId);
+        disc.removeListener('log', onLog);
+      }
+    })();
+
+    await Promise.all([ipPath, l2Path]);
+  }));
+
+  // MAC addresses for devices found through the OS path — CIP first, ARP as fallback.
+  const list = [...devices.values()];
+  const needMac = list.filter((d) => !d.mac);
+  if (needMac.length) onEvent({ type: 'status', message: `Reading MAC addresses from ${needMac.length} device(s)…` });
+  await Promise.all(needMac.filter((d) => !d.otherSubnet).map(async (dev) => {
+    try {
+      dev.mac = await enip.readMacAddress(dev.ip);
+      dev.macSource = 'CIP';
+    } catch (_) { /* fall through to ARP */ }
+  }));
+  const missing = list.filter((d) => !d.mac);
+  if (missing.length) {
+    const arp = await readArpTable();
+    for (const d of missing) if (arp.has(d.ip)) { d.mac = arp.get(d.ip); d.macSource = 'ARP'; }
+  }
+  for (const d of list) if (!d.mac) d.macSource = 'unavailable';
+  for (const d of list) onEvent({ type: 'device', device: d });
+  log(`scan done: ${list.filter((d) => !d.unidentified).length} identified, ${list.filter((d) => d.unidentified).length} IP-only`);
+
+  return list;
+}
+
+module.exports = { listAdapters, AdapterWatcher, readArpTable, scan, sameSubnet };

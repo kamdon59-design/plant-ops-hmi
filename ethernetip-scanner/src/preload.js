@@ -1,0 +1,14 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('scannerAPI', {
+  getCaptureStatus: ()     => ipcRenderer.invoke('get-capture-status'),
+  openNpcap:     ()        => ipcRenderer.invoke('open-npcap'),
+  getAdapters:   ()        => ipcRenderer.invoke('get-adapters'),
+  scan:          (opts)    => ipcRenderer.invoke('scan', opts),
+  exportCsv:     (devices) => ipcRenderer.invoke('export-csv', devices),
+  setTheme:      (mode)    => ipcRenderer.invoke('set-theme', mode),
+  openWeb:       (ip)      => ipcRenderer.invoke('open-web', ip),
+  onScanEvent:   (cb)      => ipcRenderer.on('scan-event', (_e, evt) => cb(evt)),
+  onCaptureStatus: (cb)    => ipcRenderer.on('capture-status', (_e, st) => cb(st)),
+  onAdapters:    (cb)      => ipcRenderer.on('adapters', (_e, data) => cb(data))
+});

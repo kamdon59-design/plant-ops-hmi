@@ -1,0 +1,30 @@
+name: Build EtherNet/IP Scanner (Windows)
+
+on:
+  push:
+    paths:
+      - 'ethernetip-scanner/**'
+      - '.github/workflows/build-scanner.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ethernetip-scanner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ethernetip-scanner/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npx electron-builder --win nsis --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EtherNet-IP-Device-Scanner-Setup
+          path: ethernetip-scanner/dist/*.exe
+          if-no-files-found: error
