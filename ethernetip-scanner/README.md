@@ -15,6 +15,8 @@ EtherNet/IP (CIP) device on the network your laptop is plugged into. For each de
 When you plug in an Ethernet cable, the scan starts on its own. The app checks your network adapters
 every 2 seconds and scans any adapter that gets a new IP address.
 
+The app has light and dark themes. The **System / Light / Dark** switch in the header controls it and is remembered between runs. **System** follows the Windows setting.
+
 ## Run it
 
 ```

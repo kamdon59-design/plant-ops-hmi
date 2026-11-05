@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { listAdapters, AdapterWatcher, scan } = require('./network');
@@ -14,7 +14,7 @@ function createWindow() {
     minWidth: 820,
     minHeight: 500,
     autoHideMenuBar: true,
-    backgroundColor: '#0e1208',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f141a' : '#f4f6f9',
     title: 'EtherNet/IP Device Scanner',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -58,6 +58,11 @@ async function runScan(opts = {}) {
     scanning = false;
   }
 }
+
+ipcMain.handle('set-theme', (_e, mode) => {
+  nativeTheme.themeSource = ['light', 'dark'].includes(mode) ? mode : 'system';
+  if (win && !win.isDestroyed()) win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0f141a' : '#f4f6f9');
+});
 
 ipcMain.handle('get-adapters', () => listAdapters());
 ipcMain.handle('scan', (_e, opts) => runScan(opts));

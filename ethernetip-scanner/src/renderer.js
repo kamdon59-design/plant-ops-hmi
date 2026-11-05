@@ -151,6 +151,21 @@ $('rows').addEventListener('click', async (e) => {
   if (web) scannerAPI.openWeb(web.dataset.web);
 });
 
+// ── Theme: system / light / dark ──
+function applyTheme(mode) {
+  if (mode === 'light' || mode === 'dark') document.documentElement.dataset.theme = mode;
+  else delete document.documentElement.dataset.theme;
+  document.querySelectorAll('[data-theme-btn]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.themeBtn === mode)));
+  if (scannerAPI.setTheme) scannerAPI.setTheme(mode); // keeps the Windows title bar in sync
+  try { localStorage.setItem('theme', mode); } catch (_) { /* ignore */ }
+}
+document.querySelectorAll('[data-theme-btn]').forEach((b) => b.addEventListener('click', () => applyTheme(b.dataset.themeBtn)));
+(function initTheme() {
+  let mode = 'system';
+  try { mode = localStorage.getItem('theme') || 'system'; } catch (_) { /* ignore */ }
+  applyTheme(mode);
+})();
+
 (async function init() {
   try { $('chk-auto').checked = localStorage.getItem('autoScan') !== '0'; } catch (_) { /* ignore */ }
   adapters = await scannerAPI.getAdapters();
