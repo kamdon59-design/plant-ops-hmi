@@ -187,15 +187,16 @@ class L2Discovery extends EventEmitter {
    *   pass 2  /16 and /24 directed broadcasts. Any mask of /24 or wider
    *           (/23, /22, /16, ...) is covered, because such a subnet's
    *           broadcast address is also the broadcast of its top /24.
-   *   pass 3  (only if nothing new was seen) the same sources sent to
-   *           255.255.255.255 — for devices whose stacks ignore directed
-   *           broadcasts. This one does make off-subnet devices with a
-   *           gateway send replies to it, so it only runs as a fallback.
+   *   pass 3  the same sources sent to 255.255.255.255 — for devices whose
+   *           stacks ignore subnet-directed broadcasts (some PLCs do, as an
+   *           anti-"smurf" measure). This pass always runs: skipping it when
+   *           another device had already answered pass 2 missed PLCs in the
+   *           field. Off-subnet devices that have a gateway configured send
+   *           their replies to it during this pass.
    */
   async sweep({ ranges, pps = 2000, onProgress = () => {}, shouldStop = () => false }) {
     if (!this.mac) throw new Error('adapter MAC unknown');
     this.identities.clear(); // re-read identities on every scan
-    const hostsBefore = this.hosts.size;
 
     for (const ip of this.ownIps) this.link.send(this.listIdentityFrame(ip));
 
@@ -217,10 +218,7 @@ class L2Discovery extends EventEmitter {
     };
 
     await send(probes, 'subnet broadcasts');
-    await sleep(600);
-    if (this.hosts.size === hostsBefore) {
-      await send(nets24.map((n) => [`${n}.${PROBE_HOST}`, '255.255.255.255']), 'wide search');
-    }
+    await send(nets24.map((n) => [`${n}.${PROBE_HOST}`, '255.255.255.255']), 'wide search');
   }
 
   /** RFC 5227 ARP probe — resolves true if nobody answers for `ip`. */
@@ -242,7 +240,9 @@ class L2Discovery extends EventEmitter {
   sourceCandidates(deviceIp) {
     const base = prefix24(deviceIp);
     const last = Number(deviceIp.split('.')[3]);
-    const list = [PROBE_HOST, 238, last ^ 1, last + 2, last - 2, 201, 101, 51]
+    // The neighbour (last ^ 1) is inside the device's subnet for any mask up
+    // to /30; .239 is the probe address it may already have ARPed for.
+    const list = [last ^ 1, PROBE_HOST, last + 2, last - 2, 238, 201, 101, 51]
       .filter((n) => n >= 1 && n <= 254 && n !== last)
       .map((n) => `${base}.${n}`);
     return [...new Set(list)].filter((ip) => !this.hosts.has(ip));
@@ -255,8 +255,9 @@ class L2Discovery extends EventEmitter {
   async queryIdentity(host, { timeout = 1200, maxSources = 3 } = {}) {
     if (this.identities.has(host.ip)) return this.identities.get(host.ip);
     let tried = 0;
+    let failedQueries = 0;
     for (const src of this.sourceCandidates(host.ip)) {
-      if (tried >= maxSources) break;
+      if (tried >= maxSources + 1) break;
       tried++;
       if (!(await this.isAddressFree(src))) continue;
 
@@ -281,8 +282,9 @@ class L2Discovery extends EventEmitter {
         // keep answering ARP briefly so a late reply isn't lost
         setTimeout(() => this.claims.delete(src), 1500);
       }
-      // No answer from inside the /24 — the device may not speak EtherNet/IP.
-      return null;
+      this.emit('log', `${host.ip}: no identity reply from ${src}`);
+      // Try one more free source before giving up (different mask assumptions).
+      if (++failedQueries >= 2) return null;
     }
     return null;
   }

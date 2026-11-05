@@ -5,6 +5,11 @@ let adapters = [];
 let busy = false;
 let capture = { ok: false };
 let hostScanTimer = null;
+const scanLog = [];
+function logLine(m) {
+  scanLog.push(`${new Date().toLocaleTimeString()} ${m}`);
+  if (scanLog.length > 2000) scanLog.splice(0, scanLog.length - 2000);
+}
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -70,15 +75,17 @@ function renderDevices() {
   $('count').textContent = list.length ? `${list.length} device${list.length === 1 ? '' : 's'}` : '';
 
   $('rows').innerHTML = list.map((d) => `
-    <tr>
+    <tr class="${d.unidentified ? 'unidentified' : ''}">
       <td class="mono">${esc(d.ip)}<div class="sub">${esc(d.adapter || '')}</div>${d.otherSubnet
         ? `<div class="badge" title="This device is not on your laptop's subnet. To connect to it (RSLinx, Studio 5000, web page), set your laptop's Ethernet adapter to this address with mask 255.255.255.0.">Other subnet · use laptop IP ${esc(d.suggestedLaptopIp || '')}</div>`
         : ''}</td>
       <td class="mono">${d.mac ? esc(d.mac) + `<span class="tag">${esc(d.macSource)}</span>` : `<span class="sub">${d.macSource === 'unavailable' ? 'not available' : 'reading…'}</span>`}</td>
       <td class="pn">${esc(d.catalog || '—')}</td>
-      <td>${esc(d.productName)}<div class="sub">Product code ${esc(d.productCode)}</div></td>
-      <td><span class="fw">${esc(d.firmware)}</span></td>
-      <td class="mono">${esc(d.serial)}</td>
+      <td>${d.unidentified
+        ? '<span class="sub" title="This device revealed its IP address but did not answer the EtherNet/IP identity request. Set your laptop to the IP shown on the left and try again, or connect with RSLinx.">IP found — no EtherNet/IP identity reply</span>'
+        : `${esc(d.productName)}<div class="sub">Product code ${esc(d.productCode)}</div>`}</td>
+      <td>${d.firmware ? `<span class="fw">${esc(d.firmware)}</span>` : '—'}</td>
+      <td class="mono">${esc(d.serial || '—')}</td>
       <td>${esc(d.deviceTypeName)}<div class="sub">${esc(d.vendor)}</div></td>
       <td><div class="actions">
         <button class="small" data-copy="${esc(d.ip)}" title="Copy row">Copy</button>
@@ -134,11 +141,13 @@ scannerAPI.onScanEvent((evt) => {
       devices.set(evt.device.ip, evt.device);
       renderDevices();
       break;
-    case 'error': setStatus(evt.message, true); break;
+    case 'error': setStatus(evt.message, true); logLine(`ERROR ${evt.message}`); break;
+    case 'log': logLine(evt.message); break;
     case 'done':
       setBusy(false);
+      logLine(`done: ${evt.count} device(s)`);
       setStatus(evt.count
-        ? `Scan complete — ${evt.count} EtherNet/IP device(s) found. ${new Date().toLocaleTimeString()}`
+        ? `Scan complete — ${evt.count} device(s) found. ${new Date().toLocaleTimeString()}`
         : capture.ok
           ? 'Scan complete — no EtherNet/IP devices answered. Check the cable and link lights. Tip: unplug and re-plug the cable while the app is open — most devices announce their IP when the link comes up.'
           : 'Scan complete — no devices in your laptop\'s subnet answered. Install Npcap to search other subnets.');
@@ -150,6 +159,11 @@ scannerAPI.onAdapters((list) => { adapters = list; renderAdapters(); });
 
 $('btn-scan').addEventListener('click', () => doScan());
 $('btn-npcap').addEventListener('click', () => scannerAPI.openNpcap());
+$('btn-log').addEventListener('click', async () => {
+  const header = `EtherNet/IP Scanner log — ${new Date().toString()}\nNpcap: ${capture.ok ? 'ok' : capture.error}\n`;
+  await navigator.clipboard.writeText(header + scanLog.join('\n'));
+  setStatus(`Copied scan log (${scanLog.length} lines) to the clipboard.`);
+});
 $('btn-npcap-check').addEventListener('click', async () => {
   applyCapture(await scannerAPI.getCaptureStatus(), true);
   if (!capture.ok) setStatus('Npcap still not detected — see the message above.', true);

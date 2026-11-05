@@ -95,6 +95,14 @@ async function readArpTable() {
 // ── Scan orchestrator ────────────────────────────────────────────────────
 
 const PRIVATE_RANGES = ['192.168.0.0/16', '172.16.0.0/12'];
+
+// MAC prefixes registered to Rockwell Automation / Allen-Bradley.
+const ROCKWELL_OUIS = ['00:00:BC', '00:1D:9C', '5C:88:16', 'E4:90:69'];
+function macVendor(mac) {
+  return ROCKWELL_OUIS.includes(String(mac).slice(0, 8).toUpperCase())
+    ? 'Rockwell Automation / Allen-Bradley (by MAC address)'
+    : '';
+}
 const TEN_RANGE = ['10.0.0.0/8'];
 
 function sameSubnet(ip, ad) {
@@ -126,9 +134,12 @@ async function scan({
   include10 = false, extraRanges = [], onEvent = () => {}
 }) {
   const devices = new Map();
+  const log = (message) => onEvent({ type: 'log', message });
+  log(`scan start: adapters ${adapters.map((a) => `${a.name}=${a.address}/${a.netmask}`).join(' ')}; any-subnet=${!!(anySubnet && l2 && l2.ok)} include10=${include10}`);
   const add = (dev, ad) => {
     const prev = devices.get(dev.ip);
-    if (prev) {
+    if (prev && prev.unidentified && !dev.unidentified) devices.delete(dev.ip);
+    else if (prev) {
       if (!prev.mac && dev.mac) { prev.mac = dev.mac; prev.macSource = dev.macSource; onEvent({ type: 'device', device: prev }); }
       return;
     }
@@ -160,7 +171,9 @@ async function scan({
       if (!listener) { onEvent({ type: 'status', message: `${ad.name}: packet capture not available on this adapter` }); return; }
       const disc = listener.disc;
       const onId = (id) => add(id, ad);
+      const onLog = (m) => log(m);
       disc.on('identity', onId);
+      disc.on('log', onLog);
       try {
         const ranges = [...PRIVATE_RANGES, ...(include10 ? TEN_RANGE : []), ...extraRanges];
         await disc.sweep({
@@ -179,14 +192,30 @@ async function scan({
         const todo = [...disc.hosts.values()].filter((h) =>
           h.lastSeen > recent && !devices.has(h.ip) && !sameSubnet(h.ip, ad));
         if (todo.length) onEvent({ type: 'status', message: `Found ${todo.length} address(es) on other subnets — asking for identity…` });
+        for (const h of disc.hosts.values()) {
+          if (h.lastSeen > recent) log(`${ad.name}: seen ${h.ip} ${h.mac} via ${[...h.via].join(',')}`);
+        }
         await mapLimit(todo, 6, async (h) => {
           const id = await disc.queryIdentity(h);
-          if (id) add(id, ad);
+          if (id) {
+            log(`${h.ip}: identity "${id.productName}" fw ${id.firmware} (asked from ${id.suggestedLaptopIp})`);
+            add(id, ad);
+          } else {
+            // Still report it: the IP and MAC are known even without an identity reply.
+            log(`${h.ip}: no EtherNet/IP identity reply`);
+            add({
+              ip: h.ip, mac: h.mac, macSource: 'Ethernet', unidentified: true,
+              productName: '', catalog: '', firmware: '', serial: '',
+              vendor: macVendor(h.mac), deviceTypeName: `Seen via ${[...h.via].join(', ')}`,
+              suggestedLaptopIp: disc.sourceCandidates(h.ip)[0] || ''
+            }, ad);
+          }
         });
       } catch (e) {
         onEvent({ type: 'error', message: `${ad.name}: ${e.message}` });
       } finally {
         disc.removeListener('identity', onId);
+        disc.removeListener('log', onLog);
       }
     })();
 
@@ -210,6 +239,7 @@ async function scan({
   }
   for (const d of list) if (!d.mac) d.macSource = 'unavailable';
   for (const d of list) onEvent({ type: 'device', device: d });
+  log(`scan done: ${list.filter((d) => !d.unidentified).length} identified, ${list.filter((d) => d.unidentified).length} IP-only`);
 
   return list;
 }

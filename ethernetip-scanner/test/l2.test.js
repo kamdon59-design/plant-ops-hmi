@@ -138,13 +138,17 @@ test('devices that ignore directed broadcasts are found by the fallback pass', a
   assert.deepStrictEqual(found.map((d) => d.ip), ['172.20.4.9']);
 });
 
-test('sweep is quiet: devices send almost no replies and no foreign ARP caches are touched', async () => {
+test('sweep load is bounded and no foreign ARP caches are touched', async () => {
   const { seg, sims, disc } = setup([
     { ip: '172.16.30.15', mask: '255.255.255.0', mac: '00:1D:9C:00:00:01', name: 'A' },
     { ip: '10.20.5.7', mask: '255.255.255.0', gateway: '10.20.5.1', mac: '00:1D:9C:00:00:03', name: 'B' }
   ]);
   await findAll(disc);
-  for (const s of sims) assert.ok(s.replies <= 4, `${s.name} sent ${s.replies} replies`);
+  // No gateway: off-subnet probes are dropped, so the device stays quiet.
+  assert.ok(sims[0].replies <= 4, `${sims[0].name} sent ${sims[0].replies} replies`);
+  // With a gateway, the 255.255.255.255 pass makes it answer each probe via the
+  // gateway — bounded by one reply per probed /24.
+  assert.ok(sims[1].replies <= expandTo24(['192.168.0.0/16', '172.16.0.0/12']).length + 4);
   // Every ARP reply the scanner sent went to the one device it was querying.
   const ours = seg.frames.map(P.parseFrame).filter((f) => f && f.type === 'arp' && f.op === 2 && f.senderMac === LAPTOP_MAC);
   assert.ok(ours.length >= 1);
@@ -173,4 +177,14 @@ test('does not claim an address that is already in use', async () => {
   assert.ok(id);
   assert.notStrictEqual(id.suggestedLaptopIp, '172.16.30.239');
   assert.ok(!sims[1].arpCache.has('172.16.30.239'));
+});
+
+test('a device that ignores directed broadcasts is found even when another device answers them', async () => {
+  // Field report: safety device found off-subnet, PLC not (PLC found when on the same subnet).
+  const { disc } = setup([
+    { ip: '172.16.30.20', mask: '255.255.255.0', mac: '00:1D:9C:00:00:21', name: '1734-AENTR/B Safety' },
+    { ip: '172.16.30.10', mask: '255.255.255.0', mac: '00:1D:9C:00:00:10', name: '5069-L320ER/A', acceptsDirected: false }
+  ]);
+  const found = await findAll(disc);
+  assert.deepStrictEqual(found.map((d) => d.ip), ['172.16.30.10', '172.16.30.20']);
 });
