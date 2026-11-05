@@ -29,8 +29,10 @@ class Segment {
 }
 
 class SimDevice {
-  constructor(segment, { ip, mask, gateway = null, mac, name, acceptsDirected = true }) {
-    Object.assign(this, { ip, mask, gateway, mac, name, acceptsDirected });
+  constructor(segment, { ip, mask, gateway = null, mac, name, acceptsDirected = true, busyAfterFloodMs = 0 }) {
+    Object.assign(this, { ip, mask, gateway, mac, name, acceptsDirected, busyAfterFloodMs });
+    this.recent = [];
+    this.busyUntil = 0;
     this.arpCache = new Map();
     this.pending = new Map(); // nextHop -> frame waiting for ARP
     this.replies = 0;
@@ -59,6 +61,16 @@ class SimDevice {
     const directed = enip.broadcastAddress(this.ip, this.mask);
     const accepted = [this.ip, '255.255.255.255'].concat(this.acceptsDirected ? [directed] : []);
     if (!accepted.includes(f.dstIp)) return; // not for us
+    if (this.busyAfterFloodMs) {
+      // Weak CPU: after a burst of requests it stops answering direct
+      // (unicast) requests for a while — the field symptom: the PanelView's
+      // IP was found but its identity request went unanswered.
+      const now = Date.now();
+      this.recent = this.recent.filter((t) => now - t < 1000);
+      this.recent.push(now);
+      if (this.recent.length > 200) this.busyUntil = now + this.busyAfterFloodMs;
+      if (now < this.busyUntil && f.dstIp === this.ip) return;
+    }
     // Build the reply IP packet (without Ethernet header)
     const reply = P.udp({
       srcMac: this.mac, dstMac: P.BROADCAST_MAC, srcIp: this.ip, dstIp: f.srcIp,
@@ -187,4 +199,21 @@ test('a device that ignores directed broadcasts is found even when another devic
   ]);
   const found = await findAll(disc);
   assert.deepStrictEqual(found.map((d) => d.ip), ['172.16.30.10', '172.16.30.20']);
+});
+
+test('scan: a slow device that is only found by the wide pass is identified on retry', async () => {
+  const { scan } = require('../src/network');
+  const seg = new Segment();
+  new SimDevice(seg, { ip: '172.16.30.10', mask: '255.255.255.0', mac: '00:1D:9C:00:00:10', name: '5069-L320ER/A' });
+  new SimDevice(seg, { ip: '172.16.30.20', mask: '255.255.255.0', mac: '00:1D:9C:00:00:20', name: '2711P-T10C22D9P PanelView Plus 7', acceptsDirected: false, busyAfterFloodMs: 5000 });
+  const disc = new L2Discovery({ link: seg.attach(), mac: LAPTOP_MAC, ownIps: ['127.0.0.1'] });
+  const l2 = { ok: true, forAdapter: () => ({ disc }) };
+  const ad = { name: 'test', address: '127.0.0.1', netmask: '255.0.0.0', broadcast: '127.255.255.255' };
+  const logs = [];
+  const devs = await scan({ adapters: [ad], sweep: false, l2, retryDelayMs: 1000, onEvent: (e) => (e.type === 'log' || e.type === 'error') && logs.push(e.message) });
+  const byIp = Object.fromEntries(devs.map((d) => [d.ip, d]));
+  assert.strictEqual(byIp['172.16.30.10'].productName, '5069-L320ER/A');
+  assert.strictEqual(byIp['172.16.30.20'].productName, '2711P-T10C22D9P PanelView Plus 7', logs.join('\n'));
+  assert.ok(!byIp['172.16.30.20'].unidentified);
+  assert.ok(logs.some((l) => l.startsWith('retry 1')), 'retry path was exercised');
 });

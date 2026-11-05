@@ -194,7 +194,7 @@ class L2Discovery extends EventEmitter {
    *           field. Off-subnet devices that have a gateway configured send
    *           their replies to it during this pass.
    */
-  async sweep({ ranges, pps = 2000, onProgress = () => {}, shouldStop = () => false }) {
+  async sweep({ ranges, pps = 2000, widePps = 1000, onProgress = () => {}, shouldStop = () => false, afterQuietPasses = null }) {
     if (!this.mac) throw new Error('adapter MAC unknown');
     this.identities.clear(); // re-read identities on every scan
 
@@ -206,8 +206,8 @@ class L2Discovery extends EventEmitter {
       ...nets16.map((n) => [`${n}.0.${PROBE_HOST}`, `${n}.255.255`]),
       ...nets24.map((n) => [`${n}.${PROBE_HOST}`, `${n}.255`])
     ];
-    const send = async (list, label) => {
-      const batch = Math.max(1, Math.round(pps / 50)); // a batch every 20 ms
+    const send = async (list, label, rate = pps) => {
+      const batch = Math.max(1, Math.round(rate / 50)); // a batch every 20 ms
       for (let i = 0; i < list.length; i += batch) {
         if (shouldStop()) return;
         for (const [src, dst] of list.slice(i, i + batch)) this.link.send(this.listIdentityFrame(src, dst));
@@ -218,7 +218,11 @@ class L2Discovery extends EventEmitter {
     };
 
     await send(probes, 'subnet broadcasts');
-    await send(nets24.map((n) => [`${n}.${PROBE_HOST}`, '255.255.255.255']), 'wide search');
+    // Identify what the quiet passes found *before* the wide pass: devices with
+    // a gateway configured are kept busy replying to it for a while afterwards
+    // (a PanelView Plus stopped answering in the field).
+    if (afterQuietPasses) { await sleep(600); await afterQuietPasses(); }
+    await send(nets24.map((n) => [`${n}.${PROBE_HOST}`, '255.255.255.255']), 'wide search', widePps);
   }
 
   /** RFC 5227 ARP probe — resolves true if nobody answers for `ip`. */

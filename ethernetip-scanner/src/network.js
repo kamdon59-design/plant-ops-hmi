@@ -131,7 +131,7 @@ async function mapLimit(items, limit, fn) {
  */
 async function scan({
   adapters, sweep = true, extraTargets = [], l2 = null, anySubnet = true,
-  include10 = false, extraRanges = [], onEvent = () => {}
+  include10 = false, extraRanges = [], retryDelayMs = 4000, onEvent = () => {}
 }) {
   const devices = new Map();
   const log = (message) => onEvent({ type: 'log', message });
@@ -176,41 +176,62 @@ async function scan({
       disc.on('log', onLog);
       try {
         const ranges = [...PRIVATE_RANGES, ...(include10 ? TEN_RANGE : []), ...extraRanges];
+        const recent = Date.now() - 15 * 60 * 1000;
+        const failed = new Map(); // ip -> host that didn't answer yet
+        const pending = () => [...disc.hosts.values()].filter((h) =>
+          h.lastSeen > recent && !devices.has(h.ip) && !sameSubnet(h.ip, ad));
+
+        // Ask each host that revealed itself for its identity.
+        // Hosts in our own subnet were already asked through the normal path.
+        const identify = async (hosts, opts) => {
+          if (hosts.length) onEvent({ type: 'status', message: `Found ${hosts.length} address(es) on other subnets — asking for identity…` });
+          await mapLimit(hosts, 6, async (h) => {
+            const id = await disc.queryIdentity(h, opts);
+            if (id) {
+              failed.delete(h.ip);
+              log(`${h.ip}: identity "${id.productName}" fw ${id.firmware} (asked from ${id.suggestedLaptopIp})`);
+              add(id, ad);
+            } else {
+              failed.set(h.ip, h);
+            }
+          });
+        };
+
         await disc.sweep({
           ranges,
           pps: include10 ? 4000 : 2000,
+          widePps: include10 ? 3000 : 1000,
           onProgress: (done, total, label) => onEvent({
             type: 'status',
             message: `Searching all subnets on ${ad.name} (${label})… ${Math.round((done / total) * 100)}%`
-          })
+          }),
+          afterQuietPasses: () => identify(pending())
         });
         await new Promise((r) => setTimeout(r, 800)); // late ARPs
-
-        // Query every host that revealed itself and isn't identified yet.
-        // Hosts in our own subnet were already asked through the normal path.
-        const recent = Date.now() - 15 * 60 * 1000;
-        const todo = [...disc.hosts.values()].filter((h) =>
-          h.lastSeen > recent && !devices.has(h.ip) && !sameSubnet(h.ip, ad));
-        if (todo.length) onEvent({ type: 'status', message: `Found ${todo.length} address(es) on other subnets — asking for identity…` });
         for (const h of disc.hosts.values()) {
           if (h.lastSeen > recent) log(`${ad.name}: seen ${h.ip} ${h.mac} via ${[...h.via].join(',')}`);
         }
-        await mapLimit(todo, 6, async (h) => {
-          const id = await disc.queryIdentity(h);
-          if (id) {
-            log(`${h.ip}: identity "${id.productName}" fw ${id.firmware} (asked from ${id.suggestedLaptopIp})`);
-            add(id, ad);
-          } else {
-            // Still report it: the IP and MAC are known even without an identity reply.
-            log(`${h.ip}: no EtherNet/IP identity reply`);
-            add({
-              ip: h.ip, mac: h.mac, macSource: 'Ethernet', unidentified: true,
-              productName: '', catalog: '', firmware: '', serial: '',
-              vendor: macVendor(h.mac), deviceTypeName: `Seen via ${[...h.via].join(', ')}`,
-              suggestedLaptopIp: disc.sourceCandidates(h.ip)[0] || ''
-            }, ad);
-          }
-        });
+        await identify(pending().filter((h) => !failed.has(h.ip)));
+
+        // Slow devices (e.g. still busy replying to an unreachable gateway after
+        // the wide pass) get two more chances after a pause.
+        for (let round = 1; round <= 2 && failed.size; round++) {
+          onEvent({ type: 'status', message: `Waiting for ${failed.size} slow device(s) to answer… (retry ${round} of 2)` });
+          log(`retry ${round}: ${[...failed.keys()].join(', ')}`);
+          await new Promise((r) => setTimeout(r, retryDelayMs));
+          await identify([...failed.values()], { timeout: 2500, maxSources: 2 });
+        }
+
+        for (const h of failed.values()) {
+          // Still report it: the IP and MAC are known even without an identity reply.
+          log(`${h.ip}: no EtherNet/IP identity reply`);
+          add({
+            ip: h.ip, mac: h.mac, macSource: 'Ethernet', unidentified: true,
+            productName: '', catalog: '', firmware: '', serial: '',
+            vendor: macVendor(h.mac), deviceTypeName: `Seen via ${[...h.via].join(', ')}`,
+            suggestedLaptopIp: disc.sourceCandidates(h.ip)[0] || ''
+          }, ad);
+        }
       } catch (e) {
         onEvent({ type: 'error', message: `${ad.name}: ${e.message}` });
       } finally {
