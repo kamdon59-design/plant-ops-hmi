@@ -23,7 +23,19 @@ The app has light and dark themes. The **System / Light / Dark** switch in the h
    find devices on **any subnet**, so you don't need to know a device's IP or change your laptop's IP first.
    Without Npcap, the app still works but only finds devices in your laptop's own subnet. It shows a
    **Get Npcap** button in that case.
-2. Run the app:
+2. **Download the installer.** On GitHub, open the repository's **Actions** tab and click the latest
+   **Build EtherNet/IP Scanner (Windows)** run. Under **Artifacts**, download
+   **EtherNet-IP-Device-Scanner-Setup**. GitHub builds a new installer automatically every time the app's
+   code changes.
+3. **Run the installer.** Unzip the download and run `EtherNet-IP Device Scanner Setup 1.0.0.exe`. The
+   installer isn't code-signed, so Windows SmartScreen may say "Windows protected your PC". Click
+   **More info → Run anyway**.
+4. Open **EtherNet-IP Device Scanner** from the desktop or the Start menu. When Windows Firewall asks,
+   click **Allow**.
+
+### Run from source instead
+
+Install Node.js 22 or newer, then:
 
 ```
 cd ethernetip-scanner
@@ -31,7 +43,7 @@ npm install
 npm start
 ```
 
-To build a Windows installer, run `npm run build`. The installer is written to `dist/`. You don't need
+To build the installer yourself, run `npm run build`. The installer is written to `dist/`. You don't need
 Visual Studio or any other compiler: the packet-capture binding (`koffi`) ships prebuilt.
 
 ## Finding devices when you don't know their IP
