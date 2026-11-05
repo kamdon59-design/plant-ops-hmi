@@ -32,6 +32,9 @@
     },
     "files": [
       "src/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**"
     ]
   },
   "devDependencies": {
