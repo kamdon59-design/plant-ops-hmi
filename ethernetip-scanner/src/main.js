@@ -1,10 +1,12 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { listAdapters, AdapterWatcher, scan } = require('./network');
+const { listAdapters, AdapterWatcher, scan, sameSubnet } = require('./network');
+const { L2Manager } = require('./l2/manager');
 
 let win;
 let watcher;
+let l2;
 let scanning = false;
 
 function createWindow() {
@@ -47,6 +49,9 @@ async function runScan(opts = {}) {
       adapters,
       sweep: opts.sweep !== false,
       extraTargets,
+      l2,
+      anySubnet: opts.anySubnet !== false,
+      include10: !!opts.include10,
       onEvent: (evt) => send('scan-event', evt)
     });
     send('scan-event', { type: 'done', count: devices.length });
@@ -65,6 +70,8 @@ ipcMain.handle('set-theme', (_e, mode) => {
 });
 
 ipcMain.handle('get-adapters', () => listAdapters());
+ipcMain.handle('get-capture-status', () => (l2 ? l2.status : { ok: false, error: 'not started' }));
+ipcMain.handle('open-npcap', () => shell.openExternal('https://npcap.com/#download'));
 ipcMain.handle('scan', (_e, opts) => runScan(opts));
 
 ipcMain.handle('open-web', (_e, ip) => {
@@ -79,9 +86,9 @@ ipcMain.handle('export-csv', async (_e, devices) => {
     filters: [{ name: 'CSV', extensions: ['csv'] }]
   });
   if (canceled || !filePath) return { saved: false };
-  const cols = ['ip', 'mac', 'catalog', 'productName', 'firmware', 'serial', 'vendor', 'deviceTypeName', 'productCode', 'adapter'];
+  const cols = ['ip', 'mac', 'catalog', 'productName', 'firmware', 'serial', 'vendor', 'deviceTypeName', 'productCode', 'adapter', 'otherSubnet', 'suggestedLaptopIp'];
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const header = ['IP Address', 'MAC Address', 'Part Number', 'Product Name', 'Firmware', 'Serial', 'Vendor', 'Device Type', 'Product Code', 'Adapter'];
+  const header = ['IP Address', 'MAC Address', 'Part Number', 'Product Name', 'Firmware', 'Serial', 'Vendor', 'Device Type', 'Product Code', 'Adapter', 'Other Subnet', 'Laptop IP To Use'];
   const lines = [header.map(esc).join(',')].concat(devices.map((d) => cols.map((c) => esc(d[c])).join(',')));
   fs.writeFileSync(filePath, lines.join('\r\n'));
   return { saved: true, filePath };
@@ -89,6 +96,18 @@ ipcMain.handle('export-csv', async (_e, devices) => {
 
 app.whenReady().then(() => {
   createWindow();
+
+  // Packet capture (Npcap) listens on every wired adapter from launch, so a
+  // device announcing its IP the moment the cable is plugged in is caught.
+  l2 = new L2Manager();
+  l2.start();
+  l2.on('host', (h) => {
+    // Tell the renderer about addresses seen outside the laptop's subnets;
+    // it starts a scan (if auto-scan is on) to read their identity.
+    const own = listAdapters();
+    if (own.some((a) => sameSubnet(h.ip, a))) return;
+    send('scan-event', { type: 'host-seen', host: h, message: `Device announced ${h.ip} (${h.via.join(', ')})` });
+  });
 
   // Auto-scan whenever a new (non-virtual) adapter gets an IP — i.e. the
   // Ethernet cable was plugged in and the port came up.
@@ -108,5 +127,6 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (watcher) watcher.stop();
+  if (l2) l2.stop();
   app.quit();
 });

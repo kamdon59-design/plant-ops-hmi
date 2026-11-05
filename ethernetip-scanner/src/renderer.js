@@ -3,6 +3,8 @@ const $ = (id) => document.getElementById(id);
 const devices = new Map(); // ip -> device
 let adapters = [];
 let busy = false;
+let capture = { ok: false };
+let hostScanTimer = null;
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -44,7 +46,7 @@ function renderAdapters() {
     adapters.filter((a) => !a.virtual).map((a) => `<option value="${esc(a.name)}">${esc(a.name)} — ${esc(a.address)}</option>`).join('');
   if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
 
-  const ll = adapters.find((a) => a.linkLocal && !a.virtual);
+  const ll = !capture.ok && adapters.find((a) => a.linkLocal && !a.virtual);
   const notice = $('notice');
   if (ll) {
     notice.style.display = 'block';
@@ -69,7 +71,9 @@ function renderDevices() {
 
   $('rows').innerHTML = list.map((d) => `
     <tr>
-      <td class="mono">${esc(d.ip)}<div class="sub">${esc(d.adapter || '')}</div></td>
+      <td class="mono">${esc(d.ip)}<div class="sub">${esc(d.adapter || '')}</div>${d.otherSubnet
+        ? `<div class="badge" title="This device is not on your laptop's subnet. To connect to it (RSLinx, Studio 5000, web page), set your laptop's Ethernet adapter to this address with mask 255.255.255.0.">Other subnet · use laptop IP ${esc(d.suggestedLaptopIp || '')}</div>`
+        : ''}</td>
       <td class="mono">${d.mac ? esc(d.mac) + `<span class="tag">${esc(d.macSource)}</span>` : `<span class="sub">${d.macSource === 'unavailable' ? 'not available' : 'reading…'}</span>`}</td>
       <td class="pn">${esc(d.catalog || '—')}</td>
       <td>${esc(d.productName)}<div class="sub">Product code ${esc(d.productCode)}</div></td>
@@ -98,6 +102,8 @@ async function doScan(adapterName) {
   await scannerAPI.scan({
     adapter: adapterName ?? ($('sel-adapter').value || undefined),
     sweep: $('chk-sweep').checked,
+    anySubnet: $('chk-any').checked,
+    include10: $('chk-ten').checked,
     extraTargets: extra
   });
   setBusy(false);
@@ -108,6 +114,14 @@ scannerAPI.onScanEvent((evt) => {
     case 'start': setBusy(true); setStatus('Scanning…'); break;
     case 'status': setStatus(evt.message); break;
     case 'link': setStatus(evt.message); break;
+    case 'host-seen':
+      // A device announced its address (e.g. cable just plugged in) — identify it.
+      setStatus(evt.message);
+      if ($('chk-auto').checked) {
+        clearTimeout(hostScanTimer);
+        hostScanTimer = setTimeout(() => { if (!busy) doScan(); }, 1500);
+      }
+      break;
     case 'link-up':
       if ($('chk-auto').checked) {
         setStatus(`${evt.message} — scanning…`);
@@ -125,7 +139,9 @@ scannerAPI.onScanEvent((evt) => {
       setBusy(false);
       setStatus(evt.count
         ? `Scan complete — ${evt.count} EtherNet/IP device(s) found. ${new Date().toLocaleTimeString()}`
-        : 'Scan complete — no EtherNet/IP devices answered. Check the cable, subnet, and firewall (UDP/TCP 44818).');
+        : capture.ok
+          ? 'Scan complete — no EtherNet/IP devices answered. Check the cable and link lights. Tip: unplug and re-plug the cable while the app is open — most devices announce their IP when the link comes up.'
+          : 'Scan complete — no devices in your laptop\'s subnet answered. Install Npcap to search other subnets.');
       break;
   }
 });
@@ -133,6 +149,10 @@ scannerAPI.onScanEvent((evt) => {
 scannerAPI.onAdapters((list) => { adapters = list; renderAdapters(); });
 
 $('btn-scan').addEventListener('click', () => doScan());
+$('btn-npcap').addEventListener('click', () => scannerAPI.openNpcap());
+for (const id of ['chk-any', 'chk-ten', 'chk-sweep']) {
+  $(id).addEventListener('change', (e) => { try { localStorage.setItem(id, e.target.checked ? '1' : '0'); } catch (_) { /* ignore */ } });
+}
 $('btn-clear').addEventListener('click', () => { devices.clear(); renderDevices(); setStatus('Cleared.'); });
 $('btn-export').addEventListener('click', async () => {
   const res = await scannerAPI.exportCsv([...devices.values()]);
@@ -167,7 +187,17 @@ document.querySelectorAll('[data-theme-btn]').forEach((b) => b.addEventListener(
 })();
 
 (async function init() {
-  try { $('chk-auto').checked = localStorage.getItem('autoScan') !== '0'; } catch (_) { /* ignore */ }
+  try {
+    $('chk-auto').checked = localStorage.getItem('autoScan') !== '0';
+    for (const id of ['chk-any', 'chk-ten', 'chk-sweep']) {
+      const v = localStorage.getItem(id);
+      if (v !== null) $(id).checked = v === '1';
+    }
+  } catch (_) { /* ignore */ }
+  capture = await scannerAPI.getCaptureStatus();
+  $('capture-notice').style.display = capture.ok ? 'none' : 'flex';
+  $('chk-any').disabled = $('chk-ten').disabled = !capture.ok;
+  if (!capture.ok) $('chk-any').checked = false;
   adapters = await scannerAPI.getAdapters();
   renderAdapters();
   renderDevices();

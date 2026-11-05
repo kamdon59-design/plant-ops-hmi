@@ -14,7 +14,14 @@
     "appId": "com.plantops.enipscanner",
     "productName": "EtherNet-IP Device Scanner",
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }]
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -23,10 +30,15 @@
       "createStartMenuShortcut": true,
       "shortcutName": "EtherNet-IP Device Scanner"
     },
-    "files": ["src/**/*"]
+    "files": [
+      "src/**/*"
+    ]
   },
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^24.0.0"
+  },
+  "dependencies": {
+    "koffi": "^2.16.3"
   }
 }

@@ -110,6 +110,13 @@
     .chip.virt { opacity: .55; }
     .chip.virt .dot { background: var(--muted); }
 
+    .notice-row { margin: 10px 20px 0; padding: 9px 12px; border-radius: 6px; border: 1px solid var(--warn-bdr);
+      background: var(--warn-bg); color: var(--warn-text); display: none; align-items: center; gap: 16px;
+      line-height: 1.5; flex-shrink: 0; }
+    .notice-row > div { flex: 1; }
+    .badge { display: inline-block; margin-top: 4px; padding: 1px 7px; border-radius: 4px; font-size: 11px;
+      font-family: 'Segoe UI', system-ui, sans-serif; background: var(--warn-bg); color: var(--warn-text);
+      border: 1px solid var(--warn-bdr); white-space: nowrap; }
     #notice { margin: 10px 20px 0; padding: 9px 12px; border-radius: 6px; border: 1px solid var(--warn-bdr);
       background: var(--warn-bg); color: var(--warn-text); display: none; line-height: 1.5; flex-shrink: 0; }
 
@@ -180,11 +187,25 @@
     <label title="Comma-separated IP addresses to probe directly, e.g. devices on another subnet">
       Extra IPs <input type="text" id="txt-extra" placeholder="e.g. 192.168.1.10, 10.0.0.5" />
     </label>
+    <label title="Uses packet capture (Npcap) to find devices whatever their IP address and subnet — your laptop's IP settings are not changed.">
+      <input type="checkbox" id="chk-any" checked /> Find devices on any subnet
+    </label>
+    <label title="Also search every 10.x.x.x subnet. Adds about 20 seconds.">
+      <input type="checkbox" id="chk-ten" /> Include 10.x.x.x
+    </label>
     <label><input type="checkbox" id="chk-auto" checked /> Auto-scan when cable is plugged in</label>
   </div>
 
   <div id="adapters"></div>
   <div id="notice"></div>
+  <div id="capture-notice" class="notice-row">
+    <div>
+      <b>Install Npcap to find devices on other subnets.</b>
+      Without it, only devices in your laptop's own subnet can be found.
+      Npcap is free; after installing, restart this app.
+    </div>
+    <button id="btn-npcap" class="primary">Get Npcap</button>
+  </div>
 
   <main>
     <div class="table-card" id="tbl" hidden>

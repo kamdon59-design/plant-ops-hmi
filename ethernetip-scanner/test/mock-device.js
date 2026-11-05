@@ -51,11 +51,17 @@ function startMock({ address = '0.0.0.0', port = 44818, identity } = {}) {
   }, identity);
 
   const udp = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  let inFlight = 0;
   udp.on('message', (msg, rinfo) => {
     if (msg.length >= 24 && msg.readUInt16LE(0) === 0x0063) {
-      udp.send(buildIdentityReply(id), rinfo.port, rinfo.address);
+      // Like a real embedded stack: replies that can't be delivered (no route,
+      // unresolved gateway) are dropped rather than queued without limit.
+      if (inFlight > 8) return;
+      inFlight++;
+      udp.send(buildIdentityReply(id), rinfo.port, rinfo.address, () => { inFlight--; });
     }
   });
+  udp.on('error', () => {});
 
   const tcp = net.createServer((sock) => {
     let rx = Buffer.alloc(0);
