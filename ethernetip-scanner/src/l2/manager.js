@@ -20,14 +20,31 @@ class L2Manager extends EventEmitter {
 
   get ok() { return this.status.ok; }
 
+  /** Re-check for Npcap (it may have been installed while the app is running). */
+  recheck() {
+    if (this.ok) return this.status;
+    this.status = pcap.available();
+    if (this.ok) {
+      clearInterval(this.retryTimer);
+      this.refresh();
+      this.timer = setInterval(() => this.refresh(), 5000);
+      this.emit('ready');
+    }
+    return this.status;
+  }
+
   start() {
-    if (!this.ok) return;
-    this.refresh();
-    this.timer = setInterval(() => this.refresh(), 5000);
+    if (this.ok) {
+      this.refresh();
+      this.timer = setInterval(() => this.refresh(), 5000);
+    } else {
+      this.retryTimer = setInterval(() => this.recheck(), 5000);
+    }
   }
 
   stop() {
     clearInterval(this.timer);
+    clearInterval(this.retryTimer);
     for (const l of this.listeners.values()) { l.disc.stop(); l.link.close(); }
     this.listeners.clear();
   }

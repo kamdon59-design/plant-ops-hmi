@@ -14,6 +14,7 @@ const EventEmitter = require('events');
 let lib = null;
 let loadError = null;
 let fn = null;
+let types = null;
 
 const PCAP_IF_LOOPBACK = 0x1;
 const PCAP_IF_WIRELESS = 0x8;
@@ -21,7 +22,8 @@ const PCAP_IF_CONNECTION_STATUS = 0x30;
 const PCAP_IF_CONNECTION_STATUS_DISCONNECTED = 0x20;
 
 function load() {
-  if (fn || loadError) return;
+  if (fn) return;
+  loadError = null; // retry every time until it works (Npcap may be installed while the app runs)
   let koffi;
   try {
     koffi = require('koffi');
@@ -34,20 +36,25 @@ function load() {
     const sys = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
     const npcap = path.join(sys, 'Npcap');
     // wpcap.dll loads Packet.dll from its own folder; make sure Windows finds it.
-    if (fs.existsSync(npcap)) process.env.PATH = `${npcap};${process.env.PATH}`;
+    if (fs.existsSync(npcap) && !String(process.env.PATH).includes(npcap)) {
+      process.env.PATH = `${npcap};${process.env.PATH}`;
+    }
+    if (!fs.existsSync(path.join(npcap, 'wpcap.dll'))) {
+      loadError = `Npcap is not installed (${path.join(npcap, 'wpcap.dll')} not found)`;
+      return;
+    }
     candidates.push(path.join(npcap, 'wpcap.dll'), 'wpcap.dll');
   } else if (process.platform === 'darwin') {
     candidates.push('libpcap.A.dylib', '/usr/lib/libpcap.A.dylib');
   } else {
     candidates.push('libpcap.so.1', 'libpcap.so.0.8', 'libpcap.so');
   }
+  const errors = [];
   for (const c of candidates) {
-    try { lib = koffi.load(c); break; } catch (_) { /* try next */ }
+    try { lib = koffi.load(c); break; } catch (e) { errors.push(`${c}: ${e.message}`); }
   }
   if (!lib) {
-    loadError = process.platform === 'win32'
-      ? 'Npcap is not installed'
-      : 'libpcap is not installed';
+    loadError = `Could not load ${process.platform === 'win32' ? 'Npcap' : 'libpcap'} — ${errors.join('; ')}`;
     return;
   }
 
@@ -55,6 +62,16 @@ function load() {
   // timeval is 2×long: 8 bytes on Windows, 16 bytes on 64-bit Unix.
   const tvSize = process.platform === 'win32' ? 8 : 2 * (os.arch().includes('64') ? 8 : 4);
 
+  try {
+  // Struct types can only be registered once per process, so keep them across retries.
+  types = types || {
+    pcap_if: koffi.struct('pcap_if_t', {
+      next: 'void *', name: 'const char *', description: 'const char *', addresses: 'void *', flags: 'uint32_t'
+    }),
+    pcap_addr: koffi.struct('pcap_addr_t', {
+      next: 'void *', addr: 'void *', netmask: 'void *', broadaddr: 'void *', dstaddr: 'void *'
+    })
+  };
   fn = {
     koffi,
     tvSize,
@@ -69,15 +86,14 @@ function load() {
     sendpacket: lib.func('int pcap_sendpacket(void *p, const uint8_t *buf, int size)'),
     geterr: lib.func('const char *pcap_geterr(void *p)'),
     close: lib.func('void pcap_close(void *p)'),
-    // struct pcap_if { next; name; description; addresses; flags }
-    pcap_if: koffi.struct('pcap_if_t', {
-      next: 'void *', name: 'const char *', description: 'const char *', addresses: 'void *', flags: 'uint32_t'
-    }),
-    // struct pcap_addr { next; addr; netmask; broadaddr; dstaddr }
-    pcap_addr: koffi.struct('pcap_addr_t', {
-      next: 'void *', addr: 'void *', netmask: 'void *', broadaddr: 'void *', dstaddr: 'void *'
-    })
+    pcap_if: types.pcap_if,
+    pcap_addr: types.pcap_addr
   };
+  } catch (e) {
+    fn = null;
+    lib = null;
+    loadError = `Npcap loaded but is not usable: ${e.message}`;
+  }
 }
 
 function available() {

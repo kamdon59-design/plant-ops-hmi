@@ -9,5 +9,6 @@ contextBridge.exposeInMainWorld('scannerAPI', {
   setTheme:      (mode)    => ipcRenderer.invoke('set-theme', mode),
   openWeb:       (ip)      => ipcRenderer.invoke('open-web', ip),
   onScanEvent:   (cb)      => ipcRenderer.on('scan-event', (_e, evt) => cb(evt)),
+  onCaptureStatus: (cb)    => ipcRenderer.on('capture-status', (_e, st) => cb(st)),
   onAdapters:    (cb)      => ipcRenderer.on('adapters', (_e, data) => cb(data))
 });

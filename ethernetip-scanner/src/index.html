@@ -114,6 +114,7 @@
       background: var(--warn-bg); color: var(--warn-text); display: none; align-items: center; gap: 16px;
       line-height: 1.5; flex-shrink: 0; }
     .notice-row > div { flex: 1; }
+    .notice-row .sub { font-size: 11.5px; opacity: .85; margin-top: 3px; word-break: break-word; font-family: 'Cascadia Mono', Consolas, monospace; }
     .badge { display: inline-block; margin-top: 4px; padding: 1px 7px; border-radius: 4px; font-size: 11px;
       font-family: 'Segoe UI', system-ui, sans-serif; background: var(--warn-bg); color: var(--warn-text);
       border: 1px solid var(--warn-bdr); white-space: nowrap; }
@@ -202,8 +203,10 @@
     <div>
       <b>Install Npcap to find devices on other subnets.</b>
       Without it, only devices in your laptop's own subnet can be found.
-      Npcap is free; after installing, restart this app.
+      Npcap is free. The app detects it automatically once it is installed.
+      <div class="sub" id="capture-error"></div>
     </div>
+    <button id="btn-npcap-check">Check again</button>
     <button id="btn-npcap" class="primary">Get Npcap</button>
   </div>
 

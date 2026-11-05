@@ -150,6 +150,26 @@ scannerAPI.onAdapters((list) => { adapters = list; renderAdapters(); });
 
 $('btn-scan').addEventListener('click', () => doScan());
 $('btn-npcap').addEventListener('click', () => scannerAPI.openNpcap());
+$('btn-npcap-check').addEventListener('click', async () => {
+  applyCapture(await scannerAPI.getCaptureStatus(), true);
+  if (!capture.ok) setStatus('Npcap still not detected — see the message above.', true);
+});
+scannerAPI.onCaptureStatus((st) => applyCapture(st, true));
+
+function applyCapture(st, announce) {
+  const wasOk = capture.ok;
+  capture = st || { ok: false };
+  $('capture-notice').style.display = capture.ok ? 'none' : 'flex';
+  $('capture-error').textContent = capture.ok ? '' : (capture.error || '');
+  $('chk-any').disabled = $('chk-ten').disabled = !capture.ok;
+  if (!capture.ok) $('chk-any').checked = false;
+  if (capture.ok && !wasOk && announce) {
+    $('chk-any').checked = true;
+    renderAdapters();
+    setStatus('Npcap detected — searching all subnets…');
+    doScan();
+  }
+}
 for (const id of ['chk-any', 'chk-ten', 'chk-sweep']) {
   $(id).addEventListener('change', (e) => { try { localStorage.setItem(id, e.target.checked ? '1' : '0'); } catch (_) { /* ignore */ } });
 }
@@ -194,10 +214,7 @@ document.querySelectorAll('[data-theme-btn]').forEach((b) => b.addEventListener(
       if (v !== null) $(id).checked = v === '1';
     }
   } catch (_) { /* ignore */ }
-  capture = await scannerAPI.getCaptureStatus();
-  $('capture-notice').style.display = capture.ok ? 'none' : 'flex';
-  $('chk-any').disabled = $('chk-ten').disabled = !capture.ok;
-  if (!capture.ok) $('chk-any').checked = false;
+  applyCapture(await scannerAPI.getCaptureStatus(), false);
   adapters = await scannerAPI.getAdapters();
   renderAdapters();
   renderDevices();

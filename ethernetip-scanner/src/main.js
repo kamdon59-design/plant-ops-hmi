@@ -70,7 +70,7 @@ ipcMain.handle('set-theme', (_e, mode) => {
 });
 
 ipcMain.handle('get-adapters', () => listAdapters());
-ipcMain.handle('get-capture-status', () => (l2 ? l2.status : { ok: false, error: 'not started' }));
+ipcMain.handle('get-capture-status', () => (l2 ? l2.recheck() : { ok: false, error: 'not started' }));
 ipcMain.handle('open-npcap', () => shell.openExternal('https://npcap.com/#download'));
 ipcMain.handle('scan', (_e, opts) => runScan(opts));
 
@@ -101,6 +101,7 @@ app.whenReady().then(() => {
   // device announcing its IP the moment the cable is plugged in is caught.
   l2 = new L2Manager();
   l2.start();
+  l2.on('ready', () => send('capture-status', l2.status));
   l2.on('host', (h) => {
     // Tell the renderer about addresses seen outside the laptop's subnets;
     // it starts a scan (if auto-scan is on) to read their identity.
